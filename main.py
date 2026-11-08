@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 import sys
@@ -14,18 +15,15 @@ AZURACAST_API_URL = os.environ.get("AZURACAST_API_URL")
 CHAT_ID = os.environ.get("CHAT_ID")
 TELEGRAM_API_KEY = os.environ.get("TELEGRAM_API_KEY")
 MAIN_STATION_ID = 1  # Follow AzuraCast logic
-MAX_STATION_ID = 9999
 AZURACAST_API_CALL_HEADERS = {"X-API-Key": AZURACAST_API_KEY, "accept": "application/json"}
 
-
+os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s",
     datefmt="%H:%M:%S",
     handlers=[
-        logging.FileHandler(
-            filename=f'logs/log_{datetime.now().strftime("%y_%m_%d_%H-%M-%S")}.log'
-        ),
+        logging.FileHandler(filename=f'logs/log_{datetime.now().strftime("%y_%m_%d_%H-%M-%S")}.log'),
         logging.StreamHandler(stream=sys.stdout),
     ],
 )
@@ -40,33 +38,30 @@ stations: list[dict] = []
 
 async def gather_stations():
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
-        for station_id in range(1, MAX_STATION_ID):
-            logger.info(f"Trying to find station #{station_id}")
-            try:
-                async with session.get(
-                    f"{AZURACAST_API_URL}/station/{station_id}",
-                ) as response:
-                    if response.status != status.HTTP_200_OK:
-                        logger.info(
-                            f"Got status {response.status}, stopping search. Found {len(stations)}"
-                            " stations"
-                        )
-                        break
+        logger.info(f"Trying to find stations")
+        try:
+            async with session.get(
+                f"{AZURACAST_API_URL}/stations",
+            ) as response:
+                if response.status != status.HTTP_200_OK:
+                    logger.info(f"Got status {response.status}, cannot detect stations")
 
-                    logger.info(f"Station {station_id} exists")
-                    response_json = await response.json()
-                    name = response_json["name"]
+                response_json = await response.json()
+
+                for station in response_json:
                     station_data = {
-                        "station_id": station_id,
-                        "name": name,
+                        "station_id": station["id"],
+                        "name": station["name"],
                     }
                     stations.append(station_data)
-                    logger.info(f"Station {station_id} added: {station_data}")
-            except RuntimeError:
-                logger.error(
-                    f"Could not check {AZURACAST_API_URL}/station/{station_id}, got exception",
-                    exc_info=True,
-                )
+                    logger.info(f"Found station: {station_data}")
+
+                logger.info(f"Found {len(stations)} stations")
+        except RuntimeError:
+            logger.error(
+                f"Could not check {AZURACAST_API_URL}/stations, got exception",
+                exc_info=True,
+            )
 
 
 async def startup():
@@ -129,34 +124,44 @@ async def prepare_message_per_station(
 
                 response_json = await response.json()
 
-                station_name = response_json["station"]["name"]
-                now_playing_song_artist = response_json["now_playing"]["song"]["artist"]
-                now_playing_song_title = response_json["now_playing"]["song"]["artist"]
+                station_name = html.escape(response_json["station"]["name"] or "")
+                now_playing_song_artist = html.escape(response_json["now_playing"]["song"]["artist"] or "")
+                now_playing_song_title = html.escape(response_json["now_playing"]["song"]["title"] or "")
                 now_playing_song_art = response_json["now_playing"]["song"]["art"]
                 now_playing_duration = format_duration(response_json["now_playing"]["duration"])
-                now_playing_playlist = response_json["now_playing"]["playlist"]
+                now_playing_playlist = html.escape(response_json["now_playing"]["playlist"] or "")
                 listeners_total = response_json["listeners"]["total"]
-                playing_next_song_artist = response_json["playing_next"]["song"]["artist"]
-                playing_next_song_title = response_json["playing_next"]["song"]["title"]
+                playing_next_song_artist = html.escape(response_json["playing_next"]["song"]["artist"] or "")
+                playing_next_song_title = html.escape(response_json["playing_next"]["song"]["title"] or "")
                 playing_next_duration = format_duration(response_json["playing_next"]["duration"])
                 station_public_player_url = response_json["station"]["public_player_url"]
-                station_schedule = f"{response_json["station"]["public_player_url"]}/schedule"
+                station_schedule = f"{response_json['station']['public_player_url']}/schedule"
 
                 if listeners_total == 0 and return_empty_on_zero_listeners:
+                    logger.info(
+                        f"Returning empty message for {station_id} because there are"
+                        f" {listeners_total} listeners"
+                    )
                     return (station_id, html_message)
 
-                html_message = f"""📻 Станция: <b>{station_name}</b>
-⚡ <b>{now_playing_song_artist}</b> - {now_playing_song_title}
-<a href="{now_playing_song_art}">​</a>
-⏱️ Длительность: {now_playing_duration}
-📂 Плейлист: {now_playing_playlist}
-🫂 Слушателей: {listeners_total}
+                lines = [
+                    f"📻 <b>Станция: {station_name}</b>",
+                    f'<a href="{now_playing_song_art}">​</a>',
+                    f"⚡ <b>{now_playing_song_artist}</b> - {now_playing_song_title}",
+                    f"⏱️ Длительность: {now_playing_duration}",
+                    f"📂 Плейлист: {now_playing_playlist}" if now_playing_playlist else "",
+                    f"🫂 Слушателей: {listeners_total}",
+                    " ",
+                    (
+                        f"🔜 <b>Далее:</b> {playing_next_song_artist} - {playing_next_song_title}"
+                        f" ({playing_next_duration})"
+                    ),
+                    " ",
+                    f'📼 <a href="{station_public_player_url}">Открыть плеер</a>',
+                    f'📅 <a href="{station_schedule}">Расписание</a>',
+                ]
 
-🔜 <b>Далее:</b> {playing_next_song_artist} - {playing_next_song_title} ({playing_next_duration})
-
-📼 <a href="{station_public_player_url}">Открыть плеер</a>
-📅 <a href="{station_schedule}/schedule">Расписание</a>
-"""
+                html_message = "\n".join(lines)
 
         except RuntimeError:
             logger.error(
@@ -175,8 +180,9 @@ async def prepare_message(webhook_data: dict | None) -> str:
         for station in stations
     ]
     per_station_messages = await asyncio.gather(*futures)
+    per_station_messages = [message for message in per_station_messages if message[1]]
     per_station_messages = sorted(per_station_messages, key=lambda x: x[0])
-    html_message = "\n".join(message[1] for message in per_station_messages)
+    html_message = "\n\n".join(message[1] for message in per_station_messages)
     return html_message
 
 
@@ -199,5 +205,8 @@ async def webhook(request: Request) -> Response:
             exc_info=False,
         )
     message = await prepare_message(data)
-    await bot.send_message(CHAT_ID, message, parse_mode=ParseMode.HTML)
+    if message:
+        await bot.send_message(CHAT_ID, message, parse_mode=ParseMode.HTML)
+    else:
+        logger.warning("Tried to send empty message. Something is wrong")
     return Response(status_code=status.HTTP_200_OK)
