@@ -4,11 +4,14 @@ import logging
 import os
 import sys
 from datetime import datetime
+from random import choice
 
 import aiohttp
 from fastapi import FastAPI, Request, Response, status
 from telegram import Bot
 from telegram.constants import ParseMode
+
+from motd import HOLIDAY_MOTD, RANDOM_MOTD, local_tz
 
 AZURACAST_API_KEY = os.environ.get("AZURACAST_API_KEY")
 AZURACAST_API_URL = os.environ.get("AZURACAST_API_URL")
@@ -173,9 +176,18 @@ async def prepare_message_per_station(
     return (station_id, html_message)
 
 
-async def prepare_motd_message():
-    string = "a"
-    return f"📻 <b>{string}</b>"
+def prepare_motd_message() -> str:
+    now = datetime.now(tz=local_tz)
+    selected_motd = None
+    for start_time, end_time, list_of_motd in HOLIDAY_MOTD:
+        if now >= start_time and now <= end_time:
+            selected_motd = choice(list_of_motd)
+            break
+
+    if selected_motd is None:
+        selected_motd = choice(RANDOM_MOTD)
+
+    return f"<i>{selected_motd}</i>"
 
 
 async def prepare_message(webhook_data: dict | None) -> str:
@@ -187,9 +199,9 @@ async def prepare_message(webhook_data: dict | None) -> str:
     per_station_messages = await asyncio.gather(*futures)
     per_station_messages = [message for message in per_station_messages if message[1]]
     per_station_messages = sorted(per_station_messages, key=lambda x: x[0])
-    motd_message = await prepare_motd_message()
-    messages = per_station_messages + motd_message
-    html_message = "\n\n".join(message[1] for message in messages)
+    motd_message = prepare_motd_message()
+    messages = [message[1] for message in per_station_messages] + [motd_message]
+    html_message = "\n\n".join(messages)
     return html_message
 
 
