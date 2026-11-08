@@ -173,6 +173,11 @@ async def prepare_message_per_station(
     return (station_id, html_message)
 
 
+async def prepare_motd_message():
+    string = "a"
+    return f"📻 <b>{string}</b>"
+
+
 async def prepare_message(webhook_data: dict | None) -> str:
     logger.info(f"Gathering data for {len(stations)} stations")
     futures = [
@@ -182,7 +187,9 @@ async def prepare_message(webhook_data: dict | None) -> str:
     per_station_messages = await asyncio.gather(*futures)
     per_station_messages = [message for message in per_station_messages if message[1]]
     per_station_messages = sorted(per_station_messages, key=lambda x: x[0])
-    html_message = "\n\n".join(message[1] for message in per_station_messages)
+    motd_message = await prepare_motd_message()
+    messages = per_station_messages + motd_message
+    html_message = "\n\n".join(message[1] for message in messages)
     return html_message
 
 
