@@ -1,0 +1,12 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "17888:17888"
+    volumes:
+      - ./logs:/app/logs
+    env_file:
+      - config.env
