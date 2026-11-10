@@ -43,6 +43,7 @@ stations: list[dict] = []
 
 
 async def gather_stations():
+    stations.clear()
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
         logger.info(f"Trying to find stations")
         try:
@@ -79,7 +80,7 @@ async def startup():
         f"Starting bot for {AZURACAST_API_URL} in chat {CHAT_ID} with AzuraCast key"
         f" {AZURACAST_API_KEY[:5]}... and Telegram key {TELEGRAM_API_KEY[:5]}..."
     )
-    for i in range(START_RETRIES):
+    for i in range(1, START_RETRIES + 1):
         logger.info(f"Start attempt {i}/{START_RETRIES}")
         await gather_stations()
         if len(stations) > 0:
