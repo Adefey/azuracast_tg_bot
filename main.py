@@ -206,7 +206,7 @@ async def prepare_message(webhook_data: dict | None) -> str:
 app = FastAPI(
     title="Adefe Radio bot",
     summary="Bot for AzuraCast instance that gathers information about multiple stations",
-    version="08-11-2026",
+    version="10-11-2026",
     lifespan=lifespan,
 )
 
