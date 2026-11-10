@@ -20,6 +20,8 @@ CHAT_ID = os.environ.get("CHAT_ID")
 TELEGRAM_API_KEY = os.environ.get("TELEGRAM_API_KEY")
 MAIN_STATION_ID = 1  # Follow AzuraCast logic
 AZURACAST_API_CALL_HEADERS = {"X-API-Key": AZURACAST_API_KEY, "accept": "application/json"}
+START_RETRIES = 10
+START_RETRY_WAIT_SEC = 3
 
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
@@ -48,7 +50,11 @@ async def gather_stations():
                 f"{AZURACAST_API_URL}/stations",
             ) as response:
                 if response.status != status.HTTP_200_OK:
-                    logger.info(f"Got status {response.status}, cannot detect stations")
+                    logger.warning(
+                        f"Got status {response.status}, cannot detect stations, returning with empty stations"
+                        " list"
+                    )
+                    return
 
                 response_json = await response.json()
 
@@ -61,7 +67,7 @@ async def gather_stations():
                     logger.info(f"Found station: {station_data}")
 
                 logger.info(f"Found {len(stations)} stations")
-        except RuntimeError, aiohttp.ClientError:
+        except (RuntimeError, aiohttp.ClientError):
             logger.error(
                 f"Could not check {AZURACAST_API_URL}/stations, got exception",
                 exc_info=True,
@@ -73,7 +79,20 @@ async def startup():
         f"Starting bot for {AZURACAST_API_URL} in chat {CHAT_ID} with AzuraCast key"
         f" {AZURACAST_API_KEY[:5]}... and Telegram key {TELEGRAM_API_KEY[:5]}..."
     )
-    await gather_stations()
+    for i in range(START_RETRIES):
+        logger.info(f"Start attempt {i}/{START_RETRIES}")
+        await gather_stations()
+        if len(stations) > 0:
+            break
+        await asyncio.sleep(START_RETRY_WAIT_SEC)
+
+    if len(stations) == 0:
+        logger.error(
+            f"Cannot start. No stations detected after {START_RETRIES} retries with delay"
+            f" {START_RETRY_WAIT_SEC} sec. Aborting"
+        )
+        raise RuntimeError("Cannot start, no stations detected")
+
     global bot
     bot = Bot(token=TELEGRAM_API_KEY)
 
@@ -161,7 +180,7 @@ async def prepare_message_per_station(
 
                 html_message = "\n".join(lines)
 
-        except RuntimeError, aiohttp.ClientError:
+        except (RuntimeError, aiohttp.ClientError):
             logger.error(
                 f"Could not check {AZURACAST_API_URL}/nowplaying/{station_id}, got exception",
                 exc_info=True,
@@ -196,6 +215,9 @@ async def prepare_message(webhook_data: dict | None) -> str:
     ]
     per_station_messages = await asyncio.gather(*futures)
     per_station_messages = [message for message in per_station_messages if message[1]]
+    if not per_station_messages:
+        logger.warning("Output from prepare_message_per_station is empty")
+        return ""
     per_station_messages = sorted(per_station_messages, key=lambda x: x[0])
     motd_message = prepare_motd_message()
     messages = [message[1] for message in per_station_messages] + [motd_message]
