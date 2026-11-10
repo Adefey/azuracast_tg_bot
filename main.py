@@ -33,6 +33,7 @@ logging.basicConfig(
         logging.StreamHandler(stream=sys.stdout),
     ],
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 bot: Bot | None = None
