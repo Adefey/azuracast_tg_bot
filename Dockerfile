@@ -1,4 +1,4 @@
-From python:slim
+FROM python:slim
 
 COPY . /app
 
