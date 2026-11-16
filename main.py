@@ -262,7 +262,7 @@ async def prepare_schedule_per_station(station_id: int, name: str) -> str:
                 response_json = await response.json()
                 response_json.sort(key=lambda item: item["start"])
 
-                lines = [f"Расписание <b>{name}</b> на {now.strftime("%d %B %Y")}", ""]
+                lines = [f"📅 Расписание <b>{name}</b> на {now.strftime("%d %B %Y")}", ""]
                 for i, item in enumerate(response_json, start=1):
                     title = item["title"]
                     start = datetime.fromisoformat(item["start"])
