@@ -199,7 +199,7 @@ async def prepare_message_per_station(
                         f" ({playing_next_duration})"
                     ),
                     " ",
-                    f'<a href="listen_url">📼</a> <a href="{station_public_player_url}">Открыть плеер</a>',
+                    f'<a href="{listen_url}">📼</a> <a href="{station_public_player_url}">Открыть плеер</a>',
                     f'📅 <a href="{station_schedule}">Расписание</a>',
                 ]
 
