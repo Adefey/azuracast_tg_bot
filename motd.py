@@ -21,7 +21,7 @@ RANDOM_MOTD = [
     "I am survivor!",
     "I will be a little flower in the garden of your heart",
     "I will be free until the end, I know who I am",
-    "MANKIND IS DEAD. BLOOD IS FUEL. HELL IS FULL.",
+    "Industrial Rise!Invincible creature, eternal domainMANKIND IS DEAD. BLOOD IS FUEL. HELL IS FULL.",
     "Man. Nature. Technology",
     "Maybe there's a light at the end of the line",
     "Pandemonium has faded",
@@ -45,6 +45,8 @@ RANDOM_MOTD = [
     "Свет солнечных лучей, отраженный от облаков",
     "Твоя ноша легка, но немеет рука",
     "Радио Пятая Коломна",
+    "Καταστρέφει τὸ καρφὶ καὶ τοῦ παίρνει τὴ ζωή",
+    "χαλκοῦς καὶ ἄρρηκτος",
 ]
 
 HOLIDAY_MOTD = [

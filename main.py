@@ -3,9 +3,10 @@ import html
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from random import choice
 
+import aiocron
 import aiohttp
 from fastapi import FastAPI, Request, Response, status
 from telegram import Bot
@@ -41,6 +42,28 @@ bot: Bot | None = None
 stations: list[dict] = []
 #   station_id: int,
 #   name: str,
+#   public_player_url: str
+#   schedule_url: str
+#   listen_url: str
+emojis = [
+    "😊",
+    "🚀",
+    "🌟",
+    "🎉",
+    "🔥",
+    "🤖",
+    "👾",
+    "🌈",
+    "🍕",
+    "🎸",
+    "☠️",
+    "🌃",
+    "🎸",
+    "🔩",
+    "⛓️",
+    "🌙",
+    "👾",
+]
 
 
 async def gather_stations():
@@ -64,11 +87,15 @@ async def gather_stations():
                     station_data = {
                         "station_id": station["id"],
                         "name": station["name"],
+                        "public_player_url": station["public_player_url"],
+                        "schedule_url": f"{station["public_player_url"]}/schedule",
+                        "listen_url": station["listen_url"],
                     }
                     stations.append(station_data)
                     logger.info(f"Found station: {station_data}")
 
                 logger.info(f"Found {len(stations)} stations")
+                stations.sort(key=lambda x: x["station_id"])
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
                 f"Could not check {AZURACAST_API_URL}/stations, got exception",
@@ -103,12 +130,6 @@ async def shutdown():
     logger.info("Server is stopping")
 
 
-async def lifespan(app: FastAPI):
-    await startup()
-    yield
-    await shutdown()
-
-
 def format_duration(seconds: int | float) -> str:
     if not seconds:
         return "0:00"
@@ -122,6 +143,7 @@ async def prepare_message_per_station(
     station_id: int, return_empty_on_zero_listeners: bool = True
 ) -> tuple[int, str]:
     """
+    Return:
     int - station_id - used for ordering
     str - html string - actual content
     """
@@ -153,6 +175,7 @@ async def prepare_message_per_station(
                 playing_next_song_artist = html.escape(response_json["playing_next"]["song"]["artist"] or "")
                 playing_next_song_title = html.escape(response_json["playing_next"]["song"]["title"] or "")
                 playing_next_duration = format_duration(response_json["playing_next"]["duration"])
+                listen_url = response_json["station"]["listen_url"]
                 station_public_player_url = response_json["station"]["public_player_url"]
                 station_schedule = f"{response_json['station']['public_player_url']}/schedule"
 
@@ -176,7 +199,7 @@ async def prepare_message_per_station(
                         f" ({playing_next_duration})"
                     ),
                     " ",
-                    f'📼 <a href="{station_public_player_url}">Открыть плеер</a>',
+                    f'<a href="listen_url">📼</a> <a href="{station_public_player_url}">Открыть плеер</a>',
                     f'📅 <a href="{station_schedule}">Расписание</a>',
                 ]
 
@@ -190,6 +213,74 @@ async def prepare_message_per_station(
 
     logger.info(f"Prepared message for station {station_id}")
     return (station_id, html_message)
+
+
+async def prepare_stations_list() -> str:
+    await gather_stations()  # Force update all stations
+    main_station_object = None
+    for station in stations:
+        if station["station_id"] == MAIN_STATION_ID:
+            main_station_object = station
+    lines = [
+        f"⚡️ <b>{main_station_object['name']}</b>",
+        "",
+        f'📻 <a href="{main_station_object["public_player_url"]}"><b>Главный эфир</b></a>',
+        f'📅 <a href="{main_station_object["schedule_url"]}"><b>Расписание</b></a>',
+        "",
+        "🎧 <b>Специальные станции</b>",
+    ]
+
+    for station in [s for s in stations if s["station_id"] != MAIN_STATION_ID]:
+        lines.append(
+            f"<a href=\"{station['listen_url']}\">{choice(emojis)}</a> <a"
+            f" href=\"{station['public_player_url']}\">{station['name']}</a>"
+        )
+
+    stations_message = "\n".join(lines)
+
+    return stations_message
+
+
+async def prepare_schedule_per_station(station_id: int, name: str) -> str:
+    logger.info(f"Preparing schefule for station {station_id}")
+    now = datetime.now(tz=local_tz)
+    now_iso = now.isoformat()
+    end = now + timedelta(hours=23, minutes=59)
+    end_iso = end.isoformat()
+    tz_iso = local_tz.key
+    schedule_message = ""
+    async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
+        try:
+            async with session.get(
+                f"{AZURACAST_API_URL}/station/{station_id}/schedule",
+                params={"start": now_iso, "end": end_iso, "timeZone": tz_iso},
+            ) as response:
+                if response.status != status.HTTP_200_OK:
+                    msg = f"Got status {response.status}, cannot get schedule for station {station_id}"
+                    logger.error(msg)
+                    raise RuntimeError(
+                        f"Cannot get schedule for station {station_id}, status: {response.status}"
+                    )
+
+                response_json = await response.json()
+                response_json.sort(key=lambda item: item["start"])
+
+                lines = [f"Расписание <b>{name}</b> на {now.strftime("%d %B %Y")}", ""]
+                for i, item in enumerate(response_json, start=1):
+                    title = item["title"]
+                    start = datetime.fromisoformat(item["start"])
+                    end = datetime.fromisoformat(item["end"])
+                    lines.append(f"{i}. <b>{title}</b>: {start.strftime('%H:%M')}-{end.strftime('%H:%M')}")
+
+                schedule_message = "\n".join(lines)
+
+        except (RuntimeError, aiohttp.ClientError):
+            logger.error(
+                f"Could not check {AZURACAST_API_URL}/nowplaying/{station_id}, got exception",
+                exc_info=True,
+            )
+    logger.info(f"Prepared schefule for station {station_id}")
+    return schedule_message
 
 
 def prepare_motd_message() -> str:
@@ -209,7 +300,7 @@ def prepare_motd_message() -> str:
     return f"<i>{html.escape(selected_motd)}</i>"
 
 
-async def prepare_message(webhook_data: dict | None) -> str:
+async def prepare_webhook_message(webhook_data: dict | None = None) -> str:
     logger.info(f"Gathering data for {len(stations)} stations")
     futures = [
         prepare_message_per_station(station["station_id"], station["station_id"] != MAIN_STATION_ID)
@@ -227,15 +318,51 @@ async def prepare_message(webhook_data: dict | None) -> str:
     return html_message
 
 
+async def process_nightly_sweep(webhook_data: dict | None = None) -> str:
+    logger.info("Cleaning pinned messages")
+    await bot.unpin_all_chat_messages(chat_id=CHAT_ID)
+    logger.info("Getting all stations and schedule of main station")
+    all_stations_message = await prepare_stations_list()
+    main_station_object = None
+    for station in stations:
+        if station["station_id"] == MAIN_STATION_ID:
+            main_station_object = station
+    # gather preserves order
+    main_station_schedule = await prepare_schedule_per_station(
+        main_station_object["station_id"], main_station_object["name"]
+    )
+    logger.info("Sending and pinning all stations message")
+    logger.debug(f"{all_stations_message}")
+    sent_message = await bot.send_message(
+        chat_id=CHAT_ID, text=all_stations_message, parse_mode=ParseMode.HTML, disable_web_page_preview=True
+    )
+    await bot.pin_chat_message(chat_id=CHAT_ID, message_id=sent_message.message_id)
+    logger.info("Sending and pinning main station today schedule message")
+    logger.debug(f"{main_station_schedule}")
+    sent_message = await bot.send_message(
+        chat_id=CHAT_ID, text=main_station_schedule, parse_mode=ParseMode.HTML, disable_web_page_preview=True
+    )
+    await bot.pin_chat_message(chat_id=CHAT_ID, message_id=sent_message.message_id)
+    logger.info("Nightly sweep done")
+
+
+async def lifespan(app: FastAPI):
+    await startup()
+    cron = aiocron.crontab("0 0 * * *", func=process_nightly_sweep())
+    yield
+    cron.stop()
+    await shutdown()
+
+
 app = FastAPI(
     title="Adefe Radio bot",
     summary="Bot for AzuraCast instance that gathers information about multiple stations",
-    version="10-11-2026",
+    version="17-11-2026",
     lifespan=lifespan,
 )
 
 
-@app.post("/webhook")
+@app.post("/webhook", description="AzuraCast is supposed to call this handle")
 async def webhook(request: Request) -> Response:
     data = None
     try:
@@ -246,7 +373,7 @@ async def webhook(request: Request) -> Response:
             f"Could not decode request's json. Not a problem, it is not needed anyways",
             exc_info=False,
         )
-    message = await prepare_message(data)
+    message = await prepare_webhook_message(data)
     if message:
         try:
             await bot.send_message(CHAT_ID, message, parse_mode=ParseMode.HTML)
@@ -254,4 +381,19 @@ async def webhook(request: Request) -> Response:
             logger.error("Error sending Telegram message", exc_info=True)
     else:
         logger.warning("Tried to send empty message. Something is wrong")
+    return Response(status_code=status.HTTP_200_OK)
+
+
+@app.post("/nighly", description="Handle for debugging")
+async def nightly(request: Request) -> Response:
+    data = None
+    try:
+        data = await request.json()
+        logger.debug(f"Got data: {data}")
+    except ValueError:
+        logger.warning(
+            f"Could not decode request's json. Not a problem, it is not needed anyways",
+            exc_info=False,
+        )
+    await process_nightly_sweep(data)
     return Response(status_code=status.HTTP_200_OK)
