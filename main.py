@@ -187,23 +187,20 @@ async def prepare_message_per_station(
                     return (station_id, html_message)
 
                 lines = [
-                    f"📻 <b>Станция: {station_name}</b>",
-                    f'<a href="{now_playing_song_art}">​</a>',
+                    f"📻 <b>Станция: {station_name}</b> <a href="{now_playing_song_art}">​</a>",
                     f"⚡ <b>{now_playing_song_artist}</b> - {now_playing_song_title}",
                     f"⏱️ Длительность: {now_playing_duration}",
                     f"📂 Плейлист: {now_playing_playlist}" if now_playing_playlist else "",
                     f"🫂 Слушателей: {listeners_total}",
-                    "",
                     (
                         f"🔜 <b>Далее:</b> {playing_next_song_artist} - {playing_next_song_title}"
                         f" ({playing_next_duration})"
                     ),
-                    "",
                     f'<a href="{listen_url}">📼</a> <a href="{station_public_player_url}">Открыть плеер</a>',
                     f'📅 <a href="{station_schedule}">Расписание</a>',
                 ]
 
-                html_message = "\n━━━━━━━━━━\n".join(lines)
+                html_message = "\n".join(lines)
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
