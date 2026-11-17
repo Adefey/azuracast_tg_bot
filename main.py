@@ -227,7 +227,7 @@ async def prepare_stations_list(main_station_object: dict) -> str:
 
 
 async def prepare_schedule_per_station(main_station_object: dict) -> str:
-    logger.info(f"Preparing schefule for station {main_station_object['station_id']}")
+    logger.info(f"Preparing schedule for station {main_station_object['station_id']}")
     now = datetime.now(tz=local_tz)
     now_iso = now.isoformat()
     end = now + timedelta(hours=23, minutes=59)
@@ -259,6 +259,7 @@ async def prepare_schedule_per_station(main_station_object: dict) -> str:
                         f"📅 Расписание <b>{html.escape(main_station_object['name'])}</b> на"
                         f" {now.strftime('%d %B %Y')}"
                     ),
+                    "",
                 ]
 
                 if not response_json:
@@ -285,7 +286,7 @@ async def prepare_schedule_per_station(main_station_object: dict) -> str:
                 " exception",
                 exc_info=True,
             )
-    logger.info(f"Prepared schefule for station {main_station_object['station_id']}")
+    logger.info(f"Prepared schedule for station {main_station_object['station_id']}")
     return schedule_message
 
 
