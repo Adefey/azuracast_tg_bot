@@ -67,40 +67,35 @@ emojis = [
 
 
 async def gather_stations():
-    stations.clear()
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
-        logger.info(f"Trying to find stations")
-        try:
-            async with session.get(
-                f"{AZURACAST_API_URL}/stations",
-            ) as response:
-                if response.status != status.HTTP_200_OK:
-                    logger.warning(
-                        f"Got status {response.status}, cannot detect stations, returning with empty stations"
-                        " list"
-                    )
-                    return
+        for attempt in range(1, START_RETRIES + 1):
+            logger.info(f"Trying to find stations (attempt {attempt}/{START_RETRIES})")
 
-                response_json = await response.json()
+            try:
+                async with session.get(f"{AZURACAST_API_URL}/stations") as response:
+                    if response.status == status.HTTP_200_OK:
+                        response_json = await response.json()
+                        new_stations = []
+                        for station in response_json:
+                            new_stations.append({
+                                "station_id": station["id"],
+                                "name": station["name"],
+                                "public_player_url": station["public_player_url"],
+                                "schedule_url": f"{station['public_player_url']}/schedule",
+                                "listen_url": station["listen_url"],
+                            })
+                        new_stations.sort(key=lambda x: x["station_id"])
 
-                for station in response_json:
-                    station_data = {
-                        "station_id": station["id"],
-                        "name": station["name"],
-                        "public_player_url": station["public_player_url"],
-                        "schedule_url": f"{station["public_player_url"]}/schedule",
-                        "listen_url": station["listen_url"],
-                    }
-                    stations.append(station_data)
-                    logger.info(f"Found station: {station_data}")
+                        stations.clear()
+                        stations.extend(new_stations)
+                        logger.info(f"Found {len(stations)} stations")
+                        return
+                    else:
+                        logger.warning(f"Got status {response.status}, retrying...")
+            except (RuntimeError, aiohttp.ClientError):
+                logger.error("Network error while finding stations, retrying...", exc_info=True)
 
-                logger.info(f"Found {len(stations)} stations")
-                stations.sort(key=lambda x: x["station_id"])
-        except (RuntimeError, aiohttp.ClientError):
-            logger.error(
-                f"Could not check {AZURACAST_API_URL}/stations, got exception",
-                exc_info=True,
-            )
+            await asyncio.sleep(START_RETRY_WAIT_SEC)
 
 
 async def startup():
@@ -108,13 +103,7 @@ async def startup():
         f"Starting bot for {AZURACAST_API_URL} in chat {CHAT_ID} with AzuraCast key"
         f" {AZURACAST_API_KEY[:5]}... and Telegram key {TELEGRAM_API_KEY[:5]}..."
     )
-    for i in range(1, START_RETRIES + 1):
-        logger.info(f"Start attempt {i}/{START_RETRIES}")
-        await gather_stations()
-        if len(stations) > 0:
-            break
-        await asyncio.sleep(START_RETRY_WAIT_SEC)
-
+    await gather_stations()
     if len(stations) == 0:
         logger.error(
             f"Cannot start. No stations detected after {START_RETRIES} retries with delay"
@@ -168,13 +157,17 @@ async def prepare_message_per_station(
                 station_name = html.escape(response_json["station"]["name"] or "")
                 now_playing_song_artist = html.escape(response_json["now_playing"]["song"]["artist"] or "")
                 now_playing_song_title = html.escape(response_json["now_playing"]["song"]["title"] or "")
-                now_playing_song_art = html.escape(response_json["now_playing"]["song"]["art"])
+                now_playing_song_art = html.escape(
+                    (response_json.get("now_playing", {}).get("song", {}) or {}).get("art") or ""
+                )
                 now_playing_duration = format_duration(response_json["now_playing"]["duration"])
                 now_playing_playlist = html.escape(response_json["now_playing"]["playlist"] or "")
                 listeners_total = response_json["listeners"]["total"]
-                playing_next_song_artist = html.escape(response_json["playing_next"]["song"]["artist"] or "")
-                playing_next_song_title = html.escape(response_json["playing_next"]["song"]["title"] or "")
-                playing_next_duration = format_duration(response_json["playing_next"]["duration"])
+                playing_next = response_json.get("playing_next") or {}
+                playing_next_song = playing_next.get("song") or {}
+                playing_next_song_artist = html.escape(playing_next_song.get("artist") or "")
+                playing_next_song_title = html.escape(playing_next_song.get("title") or "")
+                playing_next_duration = format_duration(playing_next.get("duration"))
                 listen_url = response_json["station"]["listen_url"]
                 station_public_player_url = response_json["station"]["public_player_url"]
                 station_schedule = f"{response_json['station']['public_player_url']}/schedule"
@@ -212,14 +205,9 @@ async def prepare_message_per_station(
     return (station_id, html_message)
 
 
-async def prepare_stations_list() -> str:
-    await gather_stations()  # Force update all stations
-    main_station_object = None
-    for station in stations:
-        if station["station_id"] == MAIN_STATION_ID:
-            main_station_object = station
+async def prepare_stations_list(main_station_object: dict) -> str:
     lines = [
-        f"⚡️ <b>{main_station_object['name']}</b>",
+        f"⚡️ <b>{html.escape(main_station_object['name'])}</b>",
         "",
         f'📻 <a href="{main_station_object["public_player_url"]}"><b>Главный эфир</b></a>',
         f'📅 <a href="{main_station_object["schedule_url"]}"><b>Расписание</b></a>',
@@ -227,10 +215,10 @@ async def prepare_stations_list() -> str:
         "🎧 <b>Специальные станции</b>",
     ]
 
-    for station in [s for s in stations if s["station_id"] != MAIN_STATION_ID]:
+    for station in [station for station in stations if station["station_id"] != MAIN_STATION_ID]:
         lines.append(
             f"<a href=\"{station['listen_url']}\">{choice(emojis)}</a> <a"
-            f" href=\"{station['public_player_url']}\">{station['name']}</a>"
+            f" href=\"{station['public_player_url']}\">{html.escape(station.get('name') or '')}</a>"
         )
 
     stations_message = "\n".join(lines)
@@ -238,8 +226,8 @@ async def prepare_stations_list() -> str:
     return stations_message
 
 
-async def prepare_schedule_per_station(station_id: int, name: str) -> str:
-    logger.info(f"Preparing schefule for station {station_id}")
+async def prepare_schedule_per_station(main_station_object: dict) -> str:
+    logger.info(f"Preparing schefule for station {main_station_object['station_id']}")
     now = datetime.now(tz=local_tz)
     now_iso = now.isoformat()
     end = now + timedelta(hours=23, minutes=59)
@@ -249,34 +237,55 @@ async def prepare_schedule_per_station(station_id: int, name: str) -> str:
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
         try:
             async with session.get(
-                f"{AZURACAST_API_URL}/station/{station_id}/schedule",
+                f"{AZURACAST_API_URL}/station/{main_station_object['station_id']}/schedule",
                 params={"start": now_iso, "end": end_iso, "timeZone": tz_iso},
             ) as response:
                 if response.status != status.HTTP_200_OK:
-                    msg = f"Got status {response.status}, cannot get schedule for station {station_id}"
+                    msg = (
+                        f"Got status {response.status}, cannot get schedule for station"
+                        f" {main_station_object['station_id']}"
+                    )
                     logger.error(msg)
                     raise RuntimeError(
-                        f"Cannot get schedule for station {station_id}, status: {response.status}"
+                        f"Cannot get schedule for station {main_station_object['station_id']}, status:"
+                        f" {response.status}"
                     )
 
                 response_json = await response.json()
-                response_json.sort(key=lambda item: item["start"])
 
-                lines = [f"📅 Расписание <b>{name}</b> на {now.strftime("%d %B %Y")}", ""]
-                for i, item in enumerate(response_json, start=1):
-                    title = item["title"]
-                    start = datetime.fromisoformat(item["start"])
-                    end = datetime.fromisoformat(item["end"])
-                    lines.append(f"{i}. <b>{title}</b>: {start.strftime('%H:%M')}-{end.strftime('%H:%M')}")
+                response_json.sort(key=lambda item: item["start"])
+                lines = [
+                    (
+                        f"📅 Расписание <b>{html.escape(main_station_object['name'])}</b> на"
+                        f" {now.strftime('%d %B %Y')}"
+                    ),
+                ]
+
+                if not response_json:
+                    lines.append("🤷 Нет расписания")
+                else:
+                    for i, item in enumerate(response_json, start=1):
+                        title = html.escape(item.get("title") or "")
+                        start = datetime.fromisoformat(item["start"])
+                        end = datetime.fromisoformat(item["end"])
+                        lines.append(
+                            f"{i}. <b>{title}</b>: {start.strftime('%H:%M')}-{end.strftime('%H:%M')}"
+                        )
+
+                lines += [
+                    "",
+                    f"🗓️ <a href=\"{main_station_object['schedule_url']}\">Расписание на неделю</a>",
+                ]
 
                 schedule_message = "\n".join(lines)
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
-                f"Could not check {AZURACAST_API_URL}/nowplaying/{station_id}, got exception",
+                f"Could not check {AZURACAST_API_URL}/nowplaying/{main_station_object['station_id']}, got"
+                " exception",
                 exc_info=True,
             )
-    logger.info(f"Prepared schefule for station {station_id}")
+    logger.info(f"Prepared schefule for station {main_station_object['station_id']}")
     return schedule_message
 
 
@@ -319,33 +328,49 @@ async def process_nightly_sweep(webhook_data: dict | None = None) -> str:
     logger.info("Cleaning pinned messages")
     await bot.unpin_all_chat_messages(chat_id=CHAT_ID)
     logger.info("Getting all stations and schedule of main station")
-    all_stations_message = await prepare_stations_list()
+    await gather_stations()  # Force update all stations
     main_station_object = None
     for station in stations:
         if station["station_id"] == MAIN_STATION_ID:
             main_station_object = station
+    all_stations_message = await prepare_stations_list(main_station_object)
     # gather preserves order
-    main_station_schedule = await prepare_schedule_per_station(
-        main_station_object["station_id"], main_station_object["name"]
-    )
+    main_station_schedule = await prepare_schedule_per_station(main_station_object)
     logger.info("Sending and pinning all stations message")
     logger.debug(f"{all_stations_message}")
-    sent_message = await bot.send_message(
-        chat_id=CHAT_ID, text=all_stations_message, parse_mode=ParseMode.HTML, disable_web_page_preview=True
-    )
-    await bot.pin_chat_message(chat_id=CHAT_ID, message_id=sent_message.message_id)
+    if all_stations_message:
+        sent_message = await bot.send_message(
+            chat_id=CHAT_ID,
+            text=all_stations_message,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+        await bot.pin_chat_message(
+            chat_id=CHAT_ID, message_id=sent_message.message_id, disable_notification=True
+        )
+    else:
+        logger.warning("Message with stations list is empty. Something is wrong")
     logger.info("Sending and pinning main station today schedule message")
     logger.debug(f"{main_station_schedule}")
-    sent_message = await bot.send_message(
-        chat_id=CHAT_ID, text=main_station_schedule, parse_mode=ParseMode.HTML, disable_web_page_preview=True
-    )
-    await bot.pin_chat_message(chat_id=CHAT_ID, message_id=sent_message.message_id)
+    if main_station_schedule:
+        sent_message = await bot.send_message(
+            chat_id=CHAT_ID,
+            text=main_station_schedule,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+        await bot.pin_chat_message(
+            chat_id=CHAT_ID, message_id=sent_message.message_id, disable_notification=True
+        )
+    else:
+        logger.warning("Message with main station schedule is empty. Something is wrong")
+
     logger.info("Nightly sweep done")
 
 
 async def lifespan(app: FastAPI):
     await startup()
-    cron = aiocron.crontab("0 0 * * *", func=process_nightly_sweep())
+    cron = aiocron.crontab("0 0 * * *", func=process_nightly_sweep, tz=local_tz)
     yield
     cron.stop()
     await shutdown()
@@ -381,7 +406,7 @@ async def webhook(request: Request) -> Response:
     return Response(status_code=status.HTTP_200_OK)
 
 
-@app.post("/nighly", description="Handle for debugging")
+@app.post("/nightly", description="Handle for debugging")
 async def nightly(request: Request) -> Response:
     data = None
     try:
