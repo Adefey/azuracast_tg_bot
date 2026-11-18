@@ -45,6 +45,7 @@ stations: list[dict] = []
 #   public_player_url: str
 #   schedule_url: str
 #   listen_url: str
+#   description: str
 emojis = [
     "😊",
     "🚀",
@@ -83,6 +84,7 @@ async def gather_stations():
                                 "public_player_url": station["public_player_url"],
                                 "schedule_url": f"{station['public_player_url']}/schedule",
                                 "listen_url": station["listen_url"],
+                                "description": station["description"],
                             })
                         new_stations.sort(key=lambda x: x["station_id"])
 
