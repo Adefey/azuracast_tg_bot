@@ -220,8 +220,8 @@ async def prepare_stations_list(main_station_object: dict) -> str:
     for station in [station for station in stations if station["station_id"] != MAIN_STATION_ID]:
         lines.append(
             f"<a href=\"{station['listen_url']}\">{choice(emojis)}</a> <a"
-            f" href=\"{station['public_player_url']}\">{html.escape(station.get('name') or '')}: "
-            f" {html.escape(station.get('description') or '')}</a>"
+            f" href=\"{station['public_player_url']}\">{html.escape(station.get('name') or '')}</a>: "
+            f"{html.escape(station.get('description') or '')}"
         )
 
     stations_message = "\n".join(lines)
