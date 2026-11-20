@@ -19,10 +19,10 @@ AZURACAST_API_KEY = os.environ.get("AZURACAST_API_KEY")
 AZURACAST_API_URL = os.environ.get("AZURACAST_API_URL")
 CHAT_ID = os.environ.get("CHAT_ID")
 TELEGRAM_API_KEY = os.environ.get("TELEGRAM_API_KEY")
-MAIN_STATION_ID = 1  # Follow AzuraCast logic
+MAIN_STATION_ID = int(os.environ.get("MAIN_STATION_ID"), 1)
 AZURACAST_API_CALL_HEADERS = {"X-API-Key": AZURACAST_API_KEY, "accept": "application/json"}
 START_RETRIES = 10
-START_RETRY_WAIT_SEC = 3
+START_RETRY_WAIT_SEC = 5
 
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
@@ -47,23 +47,21 @@ stations: list[dict] = []
 #   listen_url: str
 #   description: str
 emojis = [
+    "☠️",
+    "⛓️",
+    "🌃",
+    "🌈",
+    "🌙",
+    "🌟",
+    "🍕",
+    "🎉",
+    "🎸",
+    "👾",
+    "🔥",
+    "🔩",
     "😊",
     "🚀",
-    "🌟",
-    "🎉",
-    "🔥",
     "🤖",
-    "👾",
-    "🌈",
-    "🍕",
-    "🎸",
-    "☠️",
-    "🌃",
-    "🎸",
-    "🔩",
-    "⛓️",
-    "🌙",
-    "👾",
 ]
 
 
@@ -92,8 +90,8 @@ async def gather_stations():
                         stations.extend(new_stations)
                         logger.info(f"Found {len(stations)} stations")
                         return
-                    else:
-                        logger.warning(f"Got status {response.status}, retrying...")
+
+                    logger.warning(f"Got status {response.status}, retrying...")
             except (RuntimeError, aiohttp.ClientError):
                 logger.error("Network error while finding stations, retrying...", exc_info=True)
 
@@ -131,15 +129,15 @@ def format_duration(seconds: int | float) -> str:
 
 
 async def prepare_message_per_station(
-    station_id: int, return_empty_on_zero_listeners: bool = True
+    station_object: dict, return_empty_on_zero_listeners: bool = True
 ) -> tuple[int, str]:
     """
     Return:
-    int - station_id - used for ordering
+    int - station_id - used for ordering in final list of stations
     str - html string - actual content
     """
     logger.info(
-        f"Preparing message for station {station_id},"
+        f"Preparing message for station {station_object['station_id']},"
         f" {'will' if return_empty_on_zero_listeners else 'will not'} return empty string if there"
         " are 0 listeners"
     )
@@ -147,12 +145,16 @@ async def prepare_message_per_station(
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
         try:
             async with session.get(
-                f"{AZURACAST_API_URL}/nowplaying/{station_id}",
+                f"{AZURACAST_API_URL}/nowplaying/{station_object['station_id']}",
             ) as response:
                 if response.status != status.HTTP_200_OK:
-                    msg = f"Got status {response.status}, cannot get data for station {station_id}"
+                    msg = (
+                        f"Got status {response.status}, cannot get data for station {station_object['name']}"
+                    )
                     logger.error(msg)
-                    raise RuntimeError(f"Cannot get data for station {station_id}, status: {response.status}")
+                    raise RuntimeError(
+                        f"Cannot get data for station {station_object['name']}, status: {response.status}"
+                    )
 
                 response_json = await response.json()
 
@@ -176,13 +178,13 @@ async def prepare_message_per_station(
 
                 if listeners_total == 0 and return_empty_on_zero_listeners:
                     logger.info(
-                        f"Returning empty message for {station_id} because there are"
+                        f"Returning empty message for {station_object['name']} because there are"
                         f" {listeners_total} listeners"
                     )
-                    return (station_id, html_message)
+                    return ({station_object["station_id"]}, html_message)
 
                 lines = [
-                    f'📻 <b>Станция: {station_name}</b> <a href="{now_playing_song_art}">​</a>',
+                    (f"📻 <b>Станция: {station_name}</b> <a" f' href="{now_playing_song_art}">\u200b</a>'),
                     f"⚡ <b>{now_playing_song_artist}</b> - {now_playing_song_title}",
                     f"⏱️ Длительность: {now_playing_duration}",
                     f"📂 Плейлист: {now_playing_playlist}" if now_playing_playlist else "",
@@ -199,12 +201,13 @@ async def prepare_message_per_station(
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
-                f"Could not check {AZURACAST_API_URL}/nowplaying/{station_id}, got exception",
+                f"Could not check {AZURACAST_API_URL}/nowplaying/{station_object['station_id']}, got"
+                " exception",
                 exc_info=True,
             )
 
-    logger.info(f"Prepared message for station {station_id}")
-    return (station_id, html_message)
+    logger.info(f"Prepared message for station {station_object['name']}")
+    return (station_object["station_id"], html_message)
 
 
 async def prepare_stations_list(main_station_object: dict) -> str:
@@ -220,8 +223,8 @@ async def prepare_stations_list(main_station_object: dict) -> str:
     for station in [station for station in stations if station["station_id"] != MAIN_STATION_ID]:
         lines.append(
             f"<a href=\"{station['listen_url']}\">{choice(emojis)}</a> <a"
-            f" href=\"{station['public_player_url']}\">{html.escape(station.get('name') or '')}</a>: "
-            f"{html.escape(station.get('description') or '')}"
+            f" href=\"{station['public_player_url']}\">{html.escape(station.get('name') or '')}</a>:"
+            f" {html.escape(station.get('description') or '')}"
         )
 
     stations_message = "\n".join(lines)
@@ -229,8 +232,8 @@ async def prepare_stations_list(main_station_object: dict) -> str:
     return stations_message
 
 
-async def prepare_schedule_per_station(main_station_object: dict) -> str:
-    logger.info(f"Preparing schedule for station {main_station_object['station_id']}")
+async def prepare_schedule(station_object: dict) -> str:
+    logger.info(f"Preparing schedule for station {station_object['station_id']}")
     now = datetime.now(tz=local_tz)
     now_iso = now.isoformat()
     end = now + timedelta(hours=23, minutes=59)
@@ -240,17 +243,17 @@ async def prepare_schedule_per_station(main_station_object: dict) -> str:
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
         try:
             async with session.get(
-                f"{AZURACAST_API_URL}/station/{main_station_object['station_id']}/schedule",
+                f"{AZURACAST_API_URL}/station/{station_object['station_id']}/schedule",
                 params={"start": now_iso, "end": end_iso, "timeZone": tz_iso},
             ) as response:
                 if response.status != status.HTTP_200_OK:
                     msg = (
                         f"Got status {response.status}, cannot get schedule for station"
-                        f" {main_station_object['station_id']}"
+                        f" {station_object['station_id']}"
                     )
                     logger.error(msg)
                     raise RuntimeError(
-                        f"Cannot get schedule for station {main_station_object['station_id']}, status:"
+                        f"Cannot get schedule for station {station_object['station_id']}, status:"
                         f" {response.status}"
                     )
 
@@ -259,7 +262,7 @@ async def prepare_schedule_per_station(main_station_object: dict) -> str:
                 response_json.sort(key=lambda item: item["start"])
                 lines = [
                     (
-                        f"📅 Расписание <b>{html.escape(main_station_object['name'])}</b> на"
+                        f"📅 Расписание <b>{html.escape(station_object['name'])}</b> на"
                         f" {now.strftime('%d %B %Y')}"
                     ),
                     "",
@@ -278,18 +281,18 @@ async def prepare_schedule_per_station(main_station_object: dict) -> str:
 
                 lines += [
                     "",
-                    f"🗓️ <a href=\"{main_station_object['schedule_url']}\">Расписание на неделю</a>",
+                    f"🗓️ <a href=\"{station_object['schedule_url']}\">Расписание на неделю</a>",
                 ]
 
                 schedule_message = "\n".join(lines)
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
-                f"Could not check {AZURACAST_API_URL}/nowplaying/{main_station_object['station_id']}, got"
-                " exception",
+                f"Could not check {AZURACAST_API_URL}/nowplaying/{station_object['station_id']},"
+                " got exception",
                 exc_info=True,
             )
-    logger.info(f"Prepared schedule for station {main_station_object['station_id']}")
+    logger.info(f"Prepared schedule for station {station_object['station_id']}")
     return schedule_message
 
 
@@ -302,10 +305,10 @@ def prepare_motd_message() -> str:
         if start_time <= now <= end_time:
             holiday_motd_list.extend(list_of_motd)
 
-    if not holiday_motd_list:
-        selected_motd = choice(RANDOM_MOTD)
-    else:
+    if holiday_motd_list:
         selected_motd = choice(holiday_motd_list)
+    else:
+        selected_motd = choice(RANDOM_MOTD)
 
     return f"<i>{html.escape(selected_motd)}</i>"
 
@@ -337,9 +340,10 @@ async def process_nightly_sweep(webhook_data: dict | None = None) -> str:
     for station in stations:
         if station["station_id"] == MAIN_STATION_ID:
             main_station_object = station
-    all_stations_message = await prepare_stations_list(main_station_object)
     # gather preserves order
-    main_station_schedule = await prepare_schedule_per_station(main_station_object)
+    all_stations_message, main_station_schedule = await asyncio.gather(
+        prepare_stations_list(main_station_object), prepare_schedule(main_station_object)
+    )
     logger.info("Sending and pinning all stations message")
     logger.debug(f"{all_stations_message}")
     if all_stations_message:
@@ -383,7 +387,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Adefe Radio bot",
     summary="Bot for AzuraCast instance that gathers information about multiple stations",
-    version="18-11-2026",
+    version="20-11-2026",
     lifespan=lifespan,
 )
 
@@ -396,7 +400,7 @@ async def webhook(request: Request) -> Response:
         logger.debug(f"Got data from AzuraCast webhook: {data}")
     except ValueError:
         logger.warning(
-            f"Could not decode request's json. Not a problem, it is not needed anyways",
+            "Could not decode request's json. Not a problem, it is not needed anyways",
             exc_info=False,
         )
     message = await prepare_webhook_message(data)
