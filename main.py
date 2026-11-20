@@ -137,7 +137,7 @@ async def prepare_message_per_station(
     str - html string - actual content
     """
     logger.info(
-        f"Preparing message for station {station_object['station_id']},"
+        f"Preparing message for station {station_object['name']},"
         f" {'will' if return_empty_on_zero_listeners else 'will not'} return empty string if there"
         " are 0 listeners"
     )
