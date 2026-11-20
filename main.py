@@ -316,8 +316,7 @@ def prepare_motd_message() -> str:
 async def prepare_webhook_message(webhook_data: dict | None = None) -> str:
     logger.info(f"Gathering data for {len(stations)} stations")
     futures = [
-        prepare_message_per_station(station["station_id"], station["station_id"] != MAIN_STATION_ID)
-        for station in stations
+        prepare_message_per_station(station, station["station_id"] != MAIN_STATION_ID) for station in stations
     ]
     per_station_messages = await asyncio.gather(*futures)
     per_station_messages = [message for message in per_station_messages if message[1]]
