@@ -181,10 +181,10 @@ async def prepare_message_per_station(
                         f"Returning empty message for {station_object['name']} because there are"
                         f" {listeners_total} listeners"
                     )
-                    return ({station_object["station_id"]}, html_message)
+                    return (station_object["station_id"], html_message)
 
                 lines = [
-                    (f"📻 <b>Станция: {station_name}</b> <a" f' href="{now_playing_song_art}">\u200b</a>'),
+                    f'📻 <b>Станция: {station_name}</b> <a href="{now_playing_song_art}">\u200b</a>\'',
                     f"⚡ <b>{now_playing_song_artist}</b> - {now_playing_song_title}",
                     f"⏱️ Длительность: {now_playing_duration}",
                     f"📂 Плейлист: {now_playing_playlist}" if now_playing_playlist else "",
@@ -199,7 +199,7 @@ async def prepare_message_per_station(
 
                 html_message = "\n".join(lines)
 
-        except (RuntimeError, aiohttp.ClientError):
+        except (RuntimeError, aiohttp.ClientError, KeyError, TypeError):
             logger.error(
                 f"Could not check {AZURACAST_API_URL}/nowplaying/{station_object['station_id']}, got"
                 " exception",
@@ -288,8 +288,7 @@ async def prepare_schedule(station_object: dict) -> str:
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
-                f"Could not check {AZURACAST_API_URL}/nowplaying/{station_object['station_id']},"
-                " got exception",
+                f"Could not check {AZURACAST_API_URL}/schedule/{station_object['station_id']}, got exception",
                 exc_info=True,
             )
     logger.info(f"Prepared schedule for station {station_object['station_id']}")
@@ -386,7 +385,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Adefe Radio bot",
     summary="Bot for AzuraCast instance that gathers information about multiple stations",
-    version="20-11-2026",
+    version="21-11-2026",
     lifespan=lifespan,
 )
 
@@ -421,7 +420,7 @@ async def nightly(request: Request) -> Response:
         logger.debug(f"Got data: {data}")
     except ValueError:
         logger.warning(
-            f"Could not decode request's json. Not a problem, it is not needed anyways",
+            "Could not decode request's json. Not a problem, it is not needed anyways",
             exc_info=False,
         )
     await process_nightly_sweep(data)
