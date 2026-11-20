@@ -184,7 +184,7 @@ async def prepare_message_per_station(
                     return (station_object["station_id"], html_message)
 
                 lines = [
-                    f'📻 <b>Станция: {station_name}</b> <a href="{now_playing_song_art}">\u200b</a>\'',
+                    f'📻 <b>Станция: {station_name}</b> <a href="{now_playing_song_art}">\u200b</a>',
                     f"⚡ <b>{now_playing_song_artist}</b> - {now_playing_song_title}",
                     f"⏱️ Длительность: {now_playing_duration}",
                     f"📂 Плейлист: {now_playing_playlist}" if now_playing_playlist else "",
