@@ -1,5 +1,6 @@
 import asyncio
 import html
+import json
 import logging
 import os
 import sys
@@ -14,15 +15,24 @@ from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 from motd import HOLIDAY_MOTD, RANDOM_MOTD, local_tz
+from utils import aiohttp_get
 
 AZURACAST_API_KEY = os.environ.get("AZURACAST_API_KEY")
 AZURACAST_API_URL = os.environ.get("AZURACAST_API_URL")
-CHAT_ID = os.environ.get("CHAT_ID")
 TELEGRAM_API_KEY = os.environ.get("TELEGRAM_API_KEY")
+TELEGRAM_CHANNEL_URL = os.environ.get("TELEGRAM_CHANNEL_URL")
+TELEGRAPH_API_KEY = os.environ.get("TELEGRAPH_API_KEY")
+CHAT_ID = os.environ.get("CHAT_ID")
 MAIN_STATION_ID = int(os.environ.get("MAIN_STATION_ID", 1))
-AZURACAST_API_CALL_HEADERS = {"X-API-Key": AZURACAST_API_KEY, "accept": "application/json"}
+ARTICLE_ID = os.environ.get("ARTICLE_ID")
+AZURACAST_API_CALL_HEADERS = {
+    "X-API-Key": AZURACAST_API_KEY,
+    "accept": "application/json",
+}
 START_RETRIES = 10
 START_RETRY_WAIT_SEC = 5
+SKIP_PLAYLIST_ENTRIES = {"default", "Disabled", "Jingle"}
+
 
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
@@ -93,21 +103,25 @@ async def gather_stations():
 
                     logger.warning(f"Got status {response.status}, retrying...")
             except (RuntimeError, aiohttp.ClientError):
-                logger.error("Network error while finding stations, retrying...", exc_info=True)
+                logger.error(
+                    "Network error while finding stations, retrying...",
+                    exc_info=True,
+                )
 
             await asyncio.sleep(START_RETRY_WAIT_SEC)
 
 
 async def startup():
     logger.info(
-        f"Starting bot for {AZURACAST_API_URL} in chat {CHAT_ID} with AzuraCast key"
-        f" {AZURACAST_API_KEY[:5]}... and Telegram key {TELEGRAM_API_KEY[:5]}..."
+        f"Starting bot for {AZURACAST_API_URL} in chat {CHAT_ID} with AzuraCast"
+        f" key {AZURACAST_API_KEY[:5]}... and Telegram key"
+        f" {TELEGRAM_API_KEY[:5]}... and Telegraph key {TELEGRAPH_API_KEY[:5]}... for {TELEGRAM_CHANNEL_URL}"
     )
     await gather_stations()
     if len(stations) == 0:
         logger.error(
-            f"Cannot start. No stations detected after {START_RETRIES} retries with delay"
-            f" {START_RETRY_WAIT_SEC} sec. Aborting"
+            f"Cannot start. No stations detected after {START_RETRIES} retries"
+            f" with delay {START_RETRY_WAIT_SEC} sec. Aborting"
         )
         raise RuntimeError("Cannot start, no stations detected")
 
@@ -123,8 +137,11 @@ def format_duration(seconds: int | float) -> str:
     if not seconds:
         return "0:00"
     seconds = int(seconds)
-    minutes = seconds // 60
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
     seconds = seconds % 60
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}"
     return f"{minutes}:{seconds:02d}"
 
 
@@ -138,8 +155,8 @@ async def prepare_message_per_station(
     """
     logger.info(
         f"Preparing message for station {station_object['name']},"
-        f" {'will' if return_empty_on_zero_listeners else 'will not'} return empty string if there"
-        " are 0 listeners"
+        f" {'will' if return_empty_on_zero_listeners else 'will not'} return"
+        " empty string if there are 0 listeners"
     )
     html_message = ""
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
@@ -152,9 +169,7 @@ async def prepare_message_per_station(
                         f"Got status {response.status}, cannot get data for station {station_object['name']}"
                     )
                     logger.error(msg)
-                    raise RuntimeError(
-                        f"Cannot get data for station {station_object['name']}, status: {response.status}"
-                    )
+                    raise RuntimeError(msg)
 
                 response_json = await response.json()
 
@@ -178,20 +193,20 @@ async def prepare_message_per_station(
 
                 if listeners_total == 0 and return_empty_on_zero_listeners:
                     logger.info(
-                        f"Returning empty message for {station_object['name']} because there are"
-                        f" {listeners_total} listeners"
+                        f"Returning empty message for {station_object['name']}"
+                        f" because there are {listeners_total} listeners"
                     )
                     return (station_object["station_id"], html_message)
 
                 lines = [
-                    f'📻 <b>Станция: {station_name}</b> <a href="{now_playing_song_art}">\u200b</a>',
+                    (f"📻 <b>Станция: {station_name}</b> <a" f' href="{now_playing_song_art}">\u200b</a>'),
                     f"⚡ <b>{now_playing_song_artist}</b> - {now_playing_song_title}",
                     f"⏱️ Длительность: {now_playing_duration}",
-                    f"📂 Плейлист: {now_playing_playlist}" if now_playing_playlist else "",
+                    (f"📂 Плейлист: {now_playing_playlist}" if now_playing_playlist else ""),
                     f"🫂 Слушателей: {listeners_total}",
                     (
-                        f"🔜 <b>Далее:</b> {playing_next_song_artist} - {playing_next_song_title}"
-                        f" ({playing_next_duration})"
+                        f"🔜 <b>Далее:</b> {playing_next_song_artist} -"
+                        f" {playing_next_song_title} ({playing_next_duration})"
                     ),
                     f'<a href="{listen_url}">📼</a> <a href="{station_public_player_url}">Открыть плеер</a>',
                     f'📅 <a href="{station_schedule}">Расписание</a>',
@@ -201,8 +216,9 @@ async def prepare_message_per_station(
 
         except (RuntimeError, aiohttp.ClientError, KeyError, TypeError):
             logger.error(
-                f"Could not check {AZURACAST_API_URL}/nowplaying/{station_object['station_id']}, got"
-                " exception",
+                "Could not check"
+                f" {AZURACAST_API_URL}/nowplaying/{station_object['station_id']},"
+                " got exception",
                 exc_info=True,
             )
 
@@ -212,10 +228,15 @@ async def prepare_message_per_station(
 
 async def prepare_stations_list(main_station_object: dict) -> str:
     lines = [
-        f"⚡️ <b>{html.escape(main_station_object['name'])}</b>",
+        (
+            f"⚡️ <b>{html.escape(main_station_object['name'])}</b>:"
+            f" {html.escape(main_station_object['description'])}"
+        ),
         "",
-        f'📻 <a href="{main_station_object["public_player_url"]}"><b>Главный эфир</b></a>',
-        f'📅 <a href="{main_station_object["schedule_url"]}"><b>Расписание</b></a>',
+        f'📄 <a href="https://telegra.ph/{ARTICLE_ID}"><b>Список контента на станции</b></a>',
+        "",
+        ("📻 <a" f' href="{main_station_object["public_player_url"]}"><b>Главный' " эфир</b></a>"),
+        ("📅 <a" f' href="{main_station_object["schedule_url"]}"><b>Расписание</b></a>'),
         "",
         "🎧 <b>Специальные станции</b>",
     ]
@@ -248,21 +269,19 @@ async def prepare_schedule(station_object: dict) -> str:
             ) as response:
                 if response.status != status.HTTP_200_OK:
                     msg = (
-                        f"Got status {response.status}, cannot get schedule for station"
-                        f" {station_object['station_id']}"
+                        f"Got status {response.status}, cannot get schedule for"
+                        f" station {station_object['station_id']}"
                     )
                     logger.error(msg)
-                    raise RuntimeError(
-                        f"Cannot get schedule for station {station_object['station_id']}, status:"
-                        f" {response.status}"
-                    )
+                    raise RuntimeError(msg)
 
                 response_json = await response.json()
 
                 response_json.sort(key=lambda item: item["start"])
                 lines = [
                     (
-                        f"📅 Расписание <b>{html.escape(station_object['name'])}</b> на"
+                        "📅 Расписание"
+                        f" <b>{html.escape(station_object['name'])}</b> на"
                         f" {now.strftime('%d %B %Y')}"
                     ),
                     "",
@@ -293,6 +312,160 @@ async def prepare_schedule(station_object: dict) -> str:
             )
     logger.info(f"Prepared schedule for station {station_object['station_id']}")
     return schedule_message
+
+
+async def prepare_station_content_telegraph_article(
+    station_object: dict,
+) -> None:
+    logger.info(f"Preparing station content Telegraph article for station {station_object['station_id']}")
+    content_per_playlist: dict[str, list[str]] = {}
+    description_per_playlist: dict[str, list[str]] = {}
+    async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
+        try:
+            async with session.get(
+                f"{AZURACAST_API_URL}/station/{station_object['station_id']}/playlists",
+            ) as response:
+                if response.status != status.HTTP_200_OK:
+                    msg = (
+                        f"Got status {response.status}, cannot get playlists"
+                        f" for station {station_object['station_id']}"
+                    )
+                    logger.error(msg)
+                    raise RuntimeError(msg)
+
+                response_json = await response.json()
+
+                response_json.sort(key=lambda item: item["name"])
+
+                for playlist in response_json:
+                    if playlist["name"] in SKIP_PLAYLIST_ENTRIES:
+                        continue
+                    if not playlist["is_enabled"]:
+                        continue
+                    content_per_playlist[playlist["name"]] = []
+
+                    stats = (
+                        f"Всего песен: {playlist['num_songs']}. Суммарная длительность:"
+                        f" {format_duration(playlist['total_length'])}"
+                    )
+                    description = playlist["description"] if playlist["description"] is not None else ""
+
+                    description_per_playlist[playlist["name"]] = [stats, description]
+
+        except (RuntimeError, aiohttp.ClientError):
+            logger.error(
+                f"Could not check {AZURACAST_API_URL}/schedule/{station_object['station_id']}, got exception",
+                exc_info=True,
+            )
+
+    async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
+        try:
+            # gather preserves order
+            responses = await asyncio.gather(*(
+                aiohttp_get(
+                    session,
+                    f"{AZURACAST_API_URL}/station/{station_object['station_id']}/files/list",
+                    params={"currentDirectory": playlist_name},
+                )
+                for playlist_name in content_per_playlist.keys()
+            ))
+
+            for playlist_name, playlist_directory_contents in zip(content_per_playlist.keys(), responses):
+                for playlist_directory_content in playlist_directory_contents:
+
+                    content_label = ""
+                    if playlist_directory_content["type"] == "directory":
+                        content_label = f"Альбом: {playlist_directory_content['path_short']}"
+                    elif playlist_directory_content["type"] == "media":
+                        content_label = (
+                            "Трек:"
+                            f" {playlist_directory_content['media']['artist']}"
+                            f" - {playlist_directory_content['media']['title']}"
+                        )
+
+                    content_per_playlist[playlist_name].append(content_label)
+
+        except (RuntimeError, aiohttp.ClientError):
+            logger.error(
+                "Could not check"
+                f" {AZURACAST_API_URL}/station/{station_object['station_id']}/files/list,"
+                " got exception",
+                exc_info=True,
+            )
+
+    telegraph_article_title = f"{station_object['name']} - контент станции"
+
+    telegraph_article_content: list[dict] = []
+    telegraph_article_content.append({"tag": "p", "children": [station_object["description"]]})
+    for playlist, content_labels in content_per_playlist.items():
+        telegraph_article_content.append({"tag": "h3", "children": [playlist]})
+        telegraph_article_content.append({"tag": "p", "children": [description_per_playlist[playlist][0]]})
+        telegraph_article_content.append(
+            {"tag": "blockquote", "children": [description_per_playlist[playlist][1]]}
+        )
+        telegraph_article_content.append({
+            "tag": "ol",
+            "children": [{"tag": "li", "children": [content_label]} for content_label in content_labels],
+        })
+    telegraph_article_content.append({"tag": "hr"})
+    telegraph_article_content.append({
+        "tag": "p",
+        "children": [{
+            "tag": "a",
+            "attrs": {"href": station_object["public_player_url"]},
+            "children": ["Открыть плеер"],
+        }],
+    })
+    telegraph_article_content.append({
+        "tag": "p",
+        "children": [{
+            "tag": "a",
+            "attrs": {"href": station_object["schedule_url"]},
+            "children": ["Открыть расписание"],
+        }],
+    })
+    telegraph_article_content.append({
+        "tag": "p",
+        "children": [{
+            "tag": "a",
+            "attrs": {"href": TELEGRAM_CHANNEL_URL},
+            "children": ["Телеграм канал"],
+        }],
+    })
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(
+                f"https://api.telegra.ph/editPage/{ARTICLE_ID}",
+                data={
+                    "access_token": TELEGRAPH_API_KEY,
+                    "title": telegraph_article_title,
+                    "content": json.dumps(telegraph_article_content, ensure_ascii=False),
+                },
+            ) as response:
+                if response.status != status.HTTP_200_OK:
+                    msg = (
+                        f"Got status {response.status}, cannot update the"
+                        f" article for {station_object['station_id']}"
+                    )
+                    logger.error(msg)
+                    raise RuntimeError(msg)
+                response_json = await response.json()
+                if not response_json.get("ok"):
+                    msg = (
+                        f"Got response {response_json}, cannot update the"
+                        f" article for {station_object['station_id']}"
+                    )
+                    logger.error(msg)
+                    raise RuntimeError(msg)
+
+        except (RuntimeError, aiohttp.ClientError):
+            logger.error(
+                f"Could not check {AZURACAST_API_URL}/schedule/{station_object['station_id']}, got exception",
+                exc_info=True,
+            )
+
+    logger.info(f"Prepared station content Telegraph article for station {station_object['station_id']}")
 
 
 def prepare_motd_message() -> str:
@@ -339,8 +512,10 @@ async def process_nightly_sweep(webhook_data: dict | None = None) -> str:
         if station["station_id"] == MAIN_STATION_ID:
             main_station_object = station
     # gather preserves order
-    all_stations_message, main_station_schedule = await asyncio.gather(
-        prepare_stations_list(main_station_object), prepare_schedule(main_station_object)
+    all_stations_message, main_station_schedule, _ = await asyncio.gather(
+        prepare_stations_list(main_station_object),
+        prepare_schedule(main_station_object),
+        prepare_station_content_telegraph_article(main_station_object),
     )
     logger.info("Sending and pinning all stations message")
     logger.debug(f"{all_stations_message}")
@@ -352,7 +527,9 @@ async def process_nightly_sweep(webhook_data: dict | None = None) -> str:
             disable_web_page_preview=True,
         )
         await bot.pin_chat_message(
-            chat_id=CHAT_ID, message_id=sent_message.message_id, disable_notification=True
+            chat_id=CHAT_ID,
+            message_id=sent_message.message_id,
+            disable_notification=True,
         )
     else:
         logger.warning("Message with stations list is empty. Something is wrong")
@@ -366,7 +543,9 @@ async def process_nightly_sweep(webhook_data: dict | None = None) -> str:
             disable_web_page_preview=True,
         )
         await bot.pin_chat_message(
-            chat_id=CHAT_ID, message_id=sent_message.message_id, disable_notification=True
+            chat_id=CHAT_ID,
+            message_id=sent_message.message_id,
+            disable_notification=True,
         )
     else:
         logger.warning("Message with main station schedule is empty. Something is wrong")
@@ -425,3 +604,8 @@ async def nightly(request: Request) -> Response:
         )
     await process_nightly_sweep(data)
     return Response(status_code=status.HTTP_200_OK)
+
+
+@app.get("/health", description="Health check")
+async def health():
+    return {"status": "ok"}
