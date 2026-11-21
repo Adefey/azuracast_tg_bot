@@ -230,7 +230,7 @@ async def prepare_stations_list(main_station_object: dict) -> str:
     lines = [
         (
             f"⚡️ <b>{html.escape(main_station_object['name'])}</b>:"
-            f" {html.escape(main_station_object['description'])}"
+            f" {html.escape(main_station_object.get('description') or '')}"
         ),
         "",
         f'📄 <a href="https://telegra.ph/{ARTICLE_ID}"><b>Список контента на станции</b></a>',
@@ -310,6 +310,7 @@ async def prepare_schedule(station_object: dict) -> str:
                 f"Could not check {AZURACAST_API_URL}/schedule/{station_object['station_id']}, got exception",
                 exc_info=True,
             )
+
     logger.info(f"Prepared schedule for station {station_object['station_id']}")
     return schedule_message
 
@@ -354,9 +355,11 @@ async def prepare_station_content_telegraph_article(
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
-                f"Could not check {AZURACAST_API_URL}/schedule/{station_object['station_id']}, got exception",
+                f"Could not check {AZURACAST_API_URL}/station/{station_object['station_id']}/playlists, got"
+                " exception",
                 exc_info=True,
             )
+            return
 
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
         try:
@@ -383,7 +386,8 @@ async def prepare_station_content_telegraph_article(
                             f" - {playlist_directory_content['media']['title']}"
                         )
 
-                    content_per_playlist[playlist_name].append(content_label)
+                    if content_label:
+                        content_per_playlist[playlist_name].append(content_label)
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
@@ -392,21 +396,25 @@ async def prepare_station_content_telegraph_article(
                 " got exception",
                 exc_info=True,
             )
+            return
 
     telegraph_article_title = f"{station_object['name']} - контент станции"
 
     telegraph_article_content: list[dict] = []
-    telegraph_article_content.append({"tag": "p", "children": [station_object["description"]]})
+    if station_object["description"]:
+        telegraph_article_content.append({"tag": "p", "children": [station_object["description"]]})
     for playlist, content_labels in content_per_playlist.items():
         telegraph_article_content.append({"tag": "h3", "children": [playlist]})
         telegraph_article_content.append({"tag": "p", "children": [description_per_playlist[playlist][0]]})
-        telegraph_article_content.append(
-            {"tag": "blockquote", "children": [description_per_playlist[playlist][1]]}
-        )
-        telegraph_article_content.append({
-            "tag": "ol",
-            "children": [{"tag": "li", "children": [content_label]} for content_label in content_labels],
-        })
+        if description_per_playlist[playlist][1]:
+            telegraph_article_content.append(
+                {"tag": "blockquote", "children": [description_per_playlist[playlist][1]]}
+            )
+        if content_labels:
+            telegraph_article_content.append({
+                "tag": "ol",
+                "children": [{"tag": "li", "children": [content_label]} for content_label in content_labels],
+            })
     telegraph_article_content.append({"tag": "hr"})
     telegraph_article_content.append({
         "tag": "p",
@@ -461,11 +469,14 @@ async def prepare_station_content_telegraph_article(
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
-                f"Could not check {AZURACAST_API_URL}/schedule/{station_object['station_id']}, got exception",
+                f"Could not post https://api.telegra.ph/editPage/{ARTICLE_ID}, got exception",
                 exc_info=True,
             )
 
-    logger.info(f"Prepared station content Telegraph article for station {station_object['station_id']}")
+    logger.info(
+        f"Prepared station content Telegraph article for station {station_object['station_id']} with"
+        f" {len(telegraph_article_content)} content elements"
+    )
 
 
 def prepare_motd_message() -> str:
