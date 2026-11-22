@@ -531,33 +531,44 @@ async def process_nightly_sweep(webhook_data: dict | None = None) -> str:
     logger.info("Sending and pinning all stations message")
     logger.debug(f"{all_stations_message}")
     if all_stations_message:
-        sent_message = await bot.send_message(
-            chat_id=CHAT_ID,
-            text=all_stations_message,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-        await bot.pin_chat_message(
-            chat_id=CHAT_ID,
-            message_id=sent_message.message_id,
-            disable_notification=True,
-        )
+        try:
+            sent_message = await bot.send_message(
+                chat_id=CHAT_ID,
+                text=all_stations_message,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            await bot.pin_chat_message(
+                chat_id=CHAT_ID,
+                message_id=sent_message.message_id,
+                disable_notification=True,
+            )
+        except TelegramError:
+            logger.error(
+                f"Error sending all stations message. Tried to send:\n{all_stations_message}", exc_info=True
+            )
     else:
         logger.warning("Message with stations list is empty. Something is wrong")
     logger.info("Sending and pinning main station today schedule message")
     logger.debug(f"{main_station_schedule}")
     if main_station_schedule:
-        sent_message = await bot.send_message(
-            chat_id=CHAT_ID,
-            text=main_station_schedule,
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True,
-        )
-        await bot.pin_chat_message(
-            chat_id=CHAT_ID,
-            message_id=sent_message.message_id,
-            disable_notification=True,
-        )
+        try:
+            sent_message = await bot.send_message(
+                chat_id=CHAT_ID,
+                text=main_station_schedule,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
+            await bot.pin_chat_message(
+                chat_id=CHAT_ID,
+                message_id=sent_message.message_id,
+                disable_notification=True,
+            )
+        except TelegramError:
+            logger.error(
+                f"Error sending main stataion schedule message. Tried to send:\n{main_station_schedule}",
+                exc_info=True,
+            )
     else:
         logger.warning("Message with main station schedule is empty. Something is wrong")
 
@@ -596,7 +607,7 @@ async def webhook(request: Request) -> Response:
         try:
             await bot.send_message(CHAT_ID, message, parse_mode=ParseMode.HTML)
         except TelegramError:
-            logger.error("Error sending Telegram message", exc_info=True)
+            logger.error(f"Error sending Telegram message. Tried to send:\n{message}", exc_info=True)
     else:
         logger.warning("Tried to send empty message. Something is wrong")
     return Response(status_code=status.HTTP_200_OK)
