@@ -321,6 +321,8 @@ async def prepare_station_content_telegraph_article(
     logger.info(f"Preparing station content Telegraph article for station {station_object['station_id']}")
     content_per_playlist: dict[str, list[str]] = {}
     description_per_playlist: dict[str, list[str]] = {}
+    total_num_songs = 0
+    total_total_length = 0
     async with aiohttp.ClientSession(headers=AZURACAST_API_CALL_HEADERS) as session:
         try:
             async with session.get(
@@ -345,9 +347,14 @@ async def prepare_station_content_telegraph_article(
                         continue
                     content_per_playlist[playlist["name"]] = []
 
+                    num_songs = int(playlist["num_songs"])
+                    total_length = float(playlist["total_length"])
+
+                    total_num_songs += num_songs
+                    total_total_length += total_length
+
                     stats = (
-                        f"Всего песен: {playlist['num_songs']}. Суммарная длительность:"
-                        f" {format_duration(playlist['total_length'])}"
+                        f"Всего треков: {num_songs}. Суммарная длительность: {format_duration(total_length)}"
                     )
                     description = playlist["description"] if playlist["description"] is not None else ""
 
@@ -400,9 +407,15 @@ async def prepare_station_content_telegraph_article(
 
     telegraph_article_title = f"{station_object['name']} - контент станции"
 
+    total_stats = (
+        f"Всего треков на станции: {total_num_songs}. Суммарная длительность:"
+        f" {format_duration(total_total_length)}"
+    )
+
     telegraph_article_content: list[dict] = []
+    telegraph_article_content.append({"tag": "p", "children": [total_stats]})
     if station_object["description"]:
-        telegraph_article_content.append({"tag": "p", "children": [station_object["description"]]})
+        telegraph_article_content.append({"tag": "blockquote", "children": [station_object["description"]]})
     for playlist, content_labels in content_per_playlist.items():
         telegraph_article_content.append({"tag": "h3", "children": [playlist]})
         telegraph_article_content.append({"tag": "p", "children": [description_per_playlist[playlist][0]]})
@@ -586,7 +599,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Adefe Radio bot",
     summary="Bot for AzuraCast instance that gathers information about multiple stations",
-    version="21-11-2026",
+    version="23-11-2026",
     lifespan=lifespan,
 )
 
