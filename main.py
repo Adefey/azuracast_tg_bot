@@ -396,6 +396,8 @@ async def prepare_station_content_telegraph_article(
                     if content_label:
                         content_per_playlist[playlist_name].append(content_label)
 
+                content_per_playlist[playlist_name].sort()
+
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
                 "Could not check"
@@ -599,7 +601,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Adefe Radio bot",
     summary="Bot for AzuraCast instance that gathers information about multiple stations",
-    version="23-11-2026",
+    version="27-11-2026",
     lifespan=lifespan,
 )
 
