@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+from collections import defaultdict
 from datetime import datetime, timedelta
 from random import choice
 
@@ -338,7 +339,7 @@ async def prepare_station_content_telegraph_article(
 
                 response_json = await response.json()
 
-                response_json.sort(key=lambda item: item["name"])
+                response_json.sort(key=lambda item: item["name"].lower())
 
                 for playlist in response_json:
                     if playlist["name"] in SKIP_PLAYLIST_ENTRIES:
@@ -381,22 +382,39 @@ async def prepare_station_content_telegraph_article(
             ))
 
             for playlist_name, playlist_directory_contents in zip(content_per_playlist.keys(), responses):
+                playlist_items_by_artist = defaultdict(list)
+
                 for playlist_directory_content in playlist_directory_contents:
 
-                    content_label = ""
+                    artist = ""
+                    content = ""
+
                     if playlist_directory_content["type"] == "directory":
-                        content_label = f"Альбом: {playlist_directory_content['path_short']}"
+                        split_string = " - "
+                        split_index = playlist_directory_content["path_short"].find(split_string)
+                        if split_index != -1:
+                            artist = playlist_directory_content["path_short"][:split_index]
+                            content = (
+                                "Альбом:"
+                                f" {playlist_directory_content['path_short'][split_index+len(split_string):]}"
+                            )
+                        else:
+                            artist = playlist_directory_content["path_short"]
+                            content = "Коллекция треков"
                     elif playlist_directory_content["type"] == "media":
-                        content_label = (
-                            "Трек:"
-                            f" {playlist_directory_content['media']['artist']}"
-                            f" - {playlist_directory_content['media']['title']}"
-                        )
+                        artist = playlist_directory_content["media"]["artist"]
+                        content = f"Трек: {playlist_directory_content['media']['title']}"
 
-                    if content_label:
-                        content_per_playlist[playlist_name].append(content_label)
+                    if artist and content:
+                        playlist_items_by_artist[artist].append(content)
+                    else:
+                        logger.warning(f"Failed to add content: {artist=}, {content=}")
 
-                content_per_playlist[playlist_name].sort()
+                for artist in sorted(playlist_items_by_artist.keys(), key=lambda x: x.lower()):
+                    content_per_playlist[playlist_name].append(
+                        f"{artist}:"
+                        f" {', '.join(sorted(playlist_items_by_artist[artist], key=lambda x: x.lower()))}"
+                    )
 
         except (RuntimeError, aiohttp.ClientError):
             logger.error(
